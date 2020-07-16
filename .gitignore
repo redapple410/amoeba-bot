@@ -1,8 +1,6 @@
 backups/
 *.db
 Procfile
-package.json
-package-lock.json
 
 ## TEMPLATE ##
 
