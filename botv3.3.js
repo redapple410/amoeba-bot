@@ -1,5 +1,5 @@
-//To-Do List Bot v3.2
-//channel-specific people reminders
+//To-Do List Bot v3.3
+//channel-specific timezones
 
 require("dotenv").config();
 
@@ -11,7 +11,8 @@ var db;
 var curChanId = 0;
 
 const helpText = "❓  **AMOEBA BOT COMMANDS**  ❓\n" +
-                 "*All lists (to-do, archive, remindable people) are channel specific!*\n\n" +
+                 "All lists (to-do, archive, remindable people) are channel specific!\n" +
+                 "*Admin only commands are denoted by  ⛔.*\n\n" +
 
                  "`!todo add <due date> ; <task>` - Add a new task to the to-do list.\n" +
                  "`!todo list` - Display the current to-do list.\n" +
@@ -19,17 +20,20 @@ const helpText = "❓  **AMOEBA BOT COMMANDS**  ❓\n" +
                  "`!todo delete <task>`, `!todo remove <task>` - Delete a task from the to-do list without archiving it.\n\n" +
 
                  "`!todo archive` - Display the archive of tasks.\n" +
-                 "`!todo archivechannel` - Find out the archive channel for the current channel's list.\n" +
-                 "`!todo setarchivechannel <#channel>` - Set a new archive channel for the current channel. (admin only)\n\n" +
+                 "`!todo archivechannel` - Find out the archive channel for the current channel's to-do list.\n" +
+                 "`!todo setarchivechannel <#channel>` - Set a new archive channel for the current channel. ⛔\n\n" +
 
-                 "`!todo peopleadd <name> ; <@user>` - Add a person to the list of remindable people. (admin only)\n" +
+                 "`!todo peopleadd <name> ; <@user>` - Add a person to the list of remindable people. ⛔\n" +
                  "`!todo peoplelist` - Display the list of people who can be reminded about tasks (remindable people).\n" +
-                 "`!todo peopledelete <name>`, `!todo peopleremove <name>` - Delete a person from the list of remindable people. (admin only)\n";
+                 "`!todo peopledelete <name>`, `!todo peopleremove <name>` - Delete a person from the list of remindable people. ⛔\n\n" +
+
+                 "`!todo timezone` - Display the timezone for the current channel, as an offset from UTC.\n" +
+                 "`!todo settimezone <+HH:MM>` - Set a new timezone for the current channel by specifying the offset (+/-) from UTC. ⛔\n";
 const doneText = "Are you sure you want to mark this task as done and archive it?";
 const deleteText = "Are you sure you want to DELETE this task without archiving it?";
 const peopleDeleteText = "Are you sure you want to remove this person from the list of remindable people?"
 
-const todoCommands = ["add ", "list", "done ", "remove ", "rm ", "delete ", "archivechannel", "setarchiveChannel", "peopleadd ", "peoplelist", "peopleremove ", "peoplerm ", "peopledelete "];
+const todoCommands = ["add ", "list", "done ", "remove ", "rm ", "delete ", "archivechannel", "setarchiveChannel", "peopleadd ", "peoplelist", "peopleremove ", "peoplerm ", "peopledelete ", "timezone", "settimezone "];
 
 const remindTime = 60;
 const snoozeTime = 86400;
@@ -47,6 +51,11 @@ client.on("ready", () => {
     }
     console.log("Connected to database!");
     db.run(`CREATE TABLE IF NOT EXISTS pairs (todoChan TEXT UNIQUE NOT NULL, archiveChan TEXT UNIQUE NOT NULL)`, [], (err) => {
+      if(err){
+        return console.error(err.message);
+      }
+    });
+    db.run(`CREATE TABLE IF NOT EXISTS timezone (todoChan TEXT UNIQUE NOT NULL, hour INTEGER DEFAULT 0, min INTEGER DEFAULT 0)`, [], (err) => {
       if(err){
         return console.error(err.message);
       }
@@ -141,7 +150,12 @@ client.on("message", (msg) => {
       });
       db.run(`INSERT INTO pairs (todoChan, archiveChan) VALUES (?, ?)`, [curChanId, curChanId], (err) => {
         if(err && !err.message.includes("UNIQUE constraint failed")){
-          return console.log(err.message);
+          return console.error(err.message);
+        }
+      });
+      db.run(`INSERT INTO timezone (todoChan) VALUES (?)`, [curChanId], (err) => {
+        if(err && !err.message.includes("UNIQUE constraint failed")){
+          return console.error(err.message);
         }
       });
       db.get(`SELECT todoChan FROM pairs WHERE archiveChan = ?`, [curChanId], (err, row) => {
@@ -156,29 +170,35 @@ client.on("message", (msg) => {
 
           else if(command.startsWith("archive") && !command.startsWith("archivechannel")){
             let str = "";
-            db.get(`SELECT todoChan, archiveChan FROM pairs WHERE archiveChan = ?`, [curChanId], (err, row) => {
+            db.get(`SELECT todoChan FROM pairs WHERE archiveChan = ?`, [curChanId], (err, row) => {
               if(err){
                 return console.error(err.message);
               }
-              db.serialize(() => {
-                db.each(`SELECT datetime(date,'unixepoch','-4 hour') date, item FROM archive_${row.todoChan} ORDER BY date`, [], (err, row) => {
-                  if(err){
-                    return console.error(err.message);
-                  }
-                  if(row.date.substring(11, 19) == "00:00:00"){
-                    str += row.date.substring(0, 10) + " — " + row.item + "\n";
-                  }
-                  else{
-                    str += row.date.substring(0, 16) + " — " + row.item + "\n";
-                  }
-                });
-                db.run("", [], () => {
-                  if(str == ""){
-                    msg.channel.send(`It looks like the archive for <#${row.todoChan}> is empty!`);
-                  }
-                  else{
-                    msg.channel.send(`📁  **ARCHIVED FROM <#${row.todoChan}>**  📁\n${str}`);
-                  }
+              let todoChanId = row.todoChan;
+              db.get(`SELECT hour, min FROM timezone WHERE todoChan = ?`, [todoChanId], (err, row) => {
+                if(err){
+                  return console.error(err.message);
+                }
+                db.serialize(() => {
+                  db.each(`SELECT datetime(date,'unixepoch','${row.hour} hour','${row.min} minute') date, item FROM archive_${todoChanId} ORDER BY date`, [], (err, row) => {
+                    if(err){
+                      return console.error(err.message);
+                    }
+                    if(row.date.substring(11, 19) == "00:00:00"){
+                      str += row.date.substring(0, 10) + " — " + row.item + "\n";
+                    }
+                    else{
+                      str += row.date.substring(0, 16) + " — " + row.item + "\n";
+                    }
+                  });
+                  db.run("", [], () => {
+                    if(str == ""){
+                      msg.channel.send(`It looks like the archive for <#${todoChanId}> is empty!`);
+                    }
+                    else{
+                      msg.channel.send(`📁  **ARCHIVED FROM <#${todoChanId}>**  📁\n${str}`);
+                    }
+                  });
                 });
               });
             });
@@ -211,137 +231,163 @@ client.on("message", (msg) => {
               return;
             }
             let arr = command.slice(4).split(";", 2);
-            let d = Date.parse(arr[0] + " UTC-4");
-            let it = arr[1].trim();
-            if(isNaN(d)){
-              msg.channel.send("Sorry, I don't understand your date format! Please try again.");
-            }
-            else if(it == ""){
-              msg.react("😑");
-            }
-            else if(it.includes("@")){
-              msg.channel.send("Sorry, but the task cannot include the @ symbol. Please try again using a different wording.");
-            }
-            else{
-              db.get(`SELECT item FROM todo_${curChanId} WHERE item LIKE ? ORDER BY date`, [it], (err, row) => {
-                if(err){
-                  return console.error(err.message);
-                }
-                if(row){
-                  msg.react("⛔");
-                }
-                else{
-                  db.run(`INSERT INTO todo_${curChanId} (date, item) VALUES (?, ?)`, [d/1000, it], (err) => {
-                    if(err){
-                      return console.log(err.message);
-                    }
-                    msg.react("🆗");
-                  });
-                }
-              });
-            }
+            db.get(`SELECT hour, min FROM timezone WHERE todoChan = ?`, [curChanId], (err, row) => {
+              if(err){
+                return console.error(err.message);
+              }
+              let d = Date.parse(arr[0] + " " + timezoneString(row.hour, row.min));
+              let it = arr[1].trim();
+              if(isNaN(d)){
+                msg.channel.send("Sorry, I don't understand your date format! Please try again.");
+              }
+              else if(it == ""){
+                msg.react("😑");
+              }
+              else if(it.includes("@")){
+                msg.channel.send("Sorry, but the task cannot include the @ symbol. Please try again using a different wording.");
+              }
+              else{
+                db.get(`SELECT item FROM todo_${curChanId} WHERE item LIKE ? ORDER BY date`, [it], (err, row) => {
+                  if(err){
+                    return console.error(err.message);
+                  }
+                  if(row){
+                    msg.react("⛔");
+                  }
+                  else{
+                    db.run(`INSERT INTO todo_${curChanId} (date, item) VALUES (?, ?)`, [d/1000, it], (err) => {
+                      if(err){
+                        return console.error(err.message);
+                      }
+                      msg.react("🆗");
+                    });
+                  }
+                });
+              }
+            });
           }
 
           else if(command.startsWith("list")){
             let str = "";
-            db.serialize(() => {
-              db.each(`SELECT datetime(date,'unixepoch','-4 hour') date, item FROM todo_${curChanId} ORDER BY date`, [], (err, row) => {
-                if(err){
-                  return console.error(err.message);
-                }
-                if(row.date.substring(11, 19) == "00:00:00"){
-                  str += row.date.substring(0, 10) + " — " + row.item + "\n";
-                }
-                else{
-                  str += row.date.substring(0, 16) + " — " + row.item + "\n";
-                }
-              });
-              db.run("", [], () => {
-                if(str == ""){
-                  msg.channel.send("It looks like this to-do list is empty!");
-                }
-                else{
-                  msg.channel.send(`✅  **TO-DO LIST**  ✅\n${str}`);
-                }
+            db.get(`SELECT hour, min FROM timezone WHERE todoChan = ?`, [curChanId], (err, row) => {
+              if(err){
+                return console.error(err.message);
+              }
+              db.serialize(() => {
+                db.each(`SELECT datetime(date,'unixepoch','${row.hour} hour','${row.min} minute') date, item FROM todo_${curChanId} ORDER BY date`, [], (err, row) => {
+                  if(err){
+                    return console.error(err.message);
+                  }
+                  if(row.date.substring(11, 19) == "00:00:00"){
+                    str += row.date.substring(0, 10) + " — " + row.item + "\n";
+                  }
+                  else{
+                    str += row.date.substring(0, 16) + " — " + row.item + "\n";
+                  }
+                });
+                db.run("", [], () => {
+                  if(str == ""){
+                    msg.channel.send("It looks like this to-do list is empty!");
+                  }
+                  else{
+                    msg.channel.send(`✅  **TO-DO LIST**  ✅\n${str}`);
+                  }
+                });
               });
             });
           }
 
           else if(command.startsWith("archive") && !command.startsWith("archivechannel")){
             let str = "";
-            db.serialize(() => {
-              db.each(`SELECT datetime(date,'unixepoch','-4 hour') date, item FROM archive_${curChanId} ORDER BY date`, [], (err, row) => {
-                if(err){
-                  return console.error(err.message);
-                }
-                if(row.date.substring(11, 19) == "00:00:00"){
-                  str += row.date.substring(0, 10) + " — " + row.item + "\n";
-                }
-                else{
-                  str += row.date.substring(0, 16) + " — " + row.item + "\n";
-                }
-              });
-              db.get(`SELECT todoChan, archiveChan FROM pairs WHERE todoChan = ?`, [curChanId], (err, row) => {
-                if(str == ""){
-                  client.channels.cache.get(row.archiveChan).send(`It looks like the archive for <#${row.todoChan}> is empty!`);
-                }
-                else{
-                  client.channels.cache.get(row.archiveChan).send(`📁  **ARCHIVED FROM <#${row.todoChan}>**  📁\n${str}`);
-                }
+            db.get(`SELECT hour, min FROM timezone WHERE todoChan = ?`, [curChanId], (err, row) => {
+              if(err){
+                return console.error(err.message);
+              }
+              db.serialize(() => {
+                db.each(`SELECT datetime(date,'unixepoch','${row.hour} hour', '${row.min} minute') date, item FROM archive_${curChanId} ORDER BY date`, [], (err, row) => {
+                  if(err){
+                    return console.error(err.message);
+                  }
+                  if(row.date.substring(11, 19) == "00:00:00"){
+                    str += row.date.substring(0, 10) + " — " + row.item + "\n";
+                  }
+                  else{
+                    str += row.date.substring(0, 16) + " — " + row.item + "\n";
+                  }
+                });
+                db.get(`SELECT todoChan, archiveChan FROM pairs WHERE todoChan = ?`, [curChanId], (err, row) => {
+                  if(str == ""){
+                    client.channels.cache.get(row.archiveChan).send(`It looks like the archive for <#${row.todoChan}> is empty!`);
+                  }
+                  else{
+                    client.channels.cache.get(row.archiveChan).send(`📁  **ARCHIVED FROM <#${row.todoChan}>**  📁\n${str}`);
+                  }
+                });
               });
             });
           }
 
           else if(command.startsWith("done ")){
             let it = "%" + command.slice(5).trim() + "%";
-            db.get(`SELECT datetime(date,'unixepoch','-4 hour') date, item FROM todo_${curChanId} WHERE item LIKE ? ORDER BY date`, [it], (err, row) => {
+            db.get(`SELECT hour, min FROM timezone WHERE todoChan = ?`, [curChanId], (err, row) => {
               if(err){
                 return console.error(err.message);
               }
-              if(row){
-                if(row.date.substring(11, 19) == "00:00:00"){
-                  msg.channel.send(doneText + "\n`" + row.date.substring(0, 10) + " — " + row.item + "`");
+              db.get(`SELECT datetime(date,'unixepoch','${row.hour} hour','${row.min} minute') date, item FROM todo_${curChanId} WHERE item LIKE ? ORDER BY date`, [it], (err, row) => {
+                if(err){
+                  return console.error(err.message);
+                }
+                if(row){
+                  if(row.date.substring(11, 19) == "00:00:00"){
+                    msg.channel.send(doneText + "\n`" + row.date.substring(0, 10) + " — " + row.item + "`");
+                  }
+                  else{
+                    msg.channel.send(doneText + "\n`" + row.date.substring(0, 16) + " — " + row.item + "`");
+                  }
                 }
                 else{
-                  msg.channel.send(doneText + "\n`" + row.date.substring(0, 16) + " — " + row.item + "`");
+                  msg.react("🚫");
                 }
-              }
-              else{
-                msg.react("🚫");
-              }
+              });
             });
           }
 
           else if(command.startsWith("remove ") || command.startsWith("rm ") || command.startsWith("delete ")){
             let it = "";
+            let h = 0, m = 0;
             if(command.startsWith("remove ") || command.startsWith("delete ")){
               it = "%" + command.slice(7).trim() + "%";
             }
             else if(command.startsWith("rm ")){
               it = "%" + command.slice(3).trim() + "%";
             }
-            db.get(`SELECT datetime(date,'unixepoch','-4 hour') date, item FROM todo_${curChanId} WHERE item LIKE ? ORDER BY date`, [it], (err, row) => {
+            db.get(`SELECT hour, min FROM timezone WHERE todoChan = ?`, [curChanId], (err, row) => {
               if(err){
                 return console.error(err.message);
               }
-              if(row){
-                if(row.date.substring(11, 19) == "00:00:00"){
-                  msg.channel.send(deleteText + "\n`" + row.date.substring(0, 10) + " — " + row.item + "`");
+              db.get(`SELECT datetime(date,'unixepoch','${row.hour} hour','${row.min} minute') date, item FROM todo_${curChanId} WHERE item LIKE ? ORDER BY date`, [it], (err, row) => {
+                if(err){
+                  return console.error(err.message);
+                }
+                if(row){
+                  if(row.date.substring(11, 19) == "00:00:00"){
+                    msg.channel.send(deleteText + "\n`" + row.date.substring(0, 10) + " — " + row.item + "`");
+                  }
+                  else{
+                    msg.channel.send(deleteText + "\n`" + row.date.substring(0, 16) + " — " + row.item + "`");
+                  }
                 }
                 else{
-                  msg.channel.send(deleteText + "\n`" + row.date.substring(0, 16) + " — " + row.item + "`");
+                  msg.react("🚫");
                 }
-              }
-              else{
-                msg.react("🚫");
-              }
+              });
             });
           }
 
           else if(command.startsWith("archivechannel")){
             db.get(`SELECT archiveChan FROM pairs WHERE todoChan = ?`, [curChanId], (err, row) => {
               if(err){
-                return console.erroe(err.message);
+                return console.error(err.message);
               }
               msg.channel.send(`The archive channel for <#${curChanId}> is <#${row.archiveChan}>`);
             });
@@ -445,7 +491,7 @@ client.on("message", (msg) => {
                   else{
                     db.run(`INSERT INTO people_${curChanId} (name, userid) VALUES (?, ?)`, [p, id], (err) => {
                       if(err){
-                        return console.log(err.message);
+                        return console.error(err.message);
                       }
                       msg.react("🆗");
                     });
@@ -512,6 +558,44 @@ client.on("message", (msg) => {
             });
           }
 
+          else if(command.startsWith("timezone")){
+            db.get(`SELECT hour, min FROM timezone WHERE todoChan = ?`, [curChanId], (err, row) => {
+              if(err){
+                return console.error(err.message);
+              }
+              msg.channel.send(`The timezone for <#${curChanId}> is ${timezoneString(row.hour, row.min)}`);
+            });
+          }
+
+          else if(command.startsWith("settimezone ")){
+            if(!msg.member.hasPermission("ADMINISTRATOR")){
+              msg.react("⛔");
+              return;
+            }
+            let mult = 1;
+            if(command.slice(12).includes("-")){
+              mult = -1;
+            }
+            let str = command.slice(12).replace(/-/g, "");
+            let arr = str.split(":", 2);
+            let h = parseInt(arr[0]);
+            let m = parseInt(arr[1]);
+            if(isNaN(h) || isNaN(m)){
+              msg.channel.send("Sorry, please check the format of your command and try again.");
+              return;
+            }
+            else if(h >= 15 || m >= 60){
+              msg.channel.send("Sorry, please ensure that the hour offset is no more than 14 hours, and the minute offset is no more than 59 min.");
+              return;
+            }
+            db.run(`UPDATE timezone SET hour = ?, min = ? WHERE todoChan = ?`, [h * mult, m * mult, curChanId], (err) => {
+              if(err){
+                return console.error(err.message);
+              }
+              msg.react("🆗");
+            });
+          }
+
           else{
             msg.react("❓");
           }
@@ -540,13 +624,13 @@ client.on("message", (msg) => {
               }
               db.run(`INSERT INTO archive_${curChanId} (date, item) VALUES (?, ?)`, [row.date, row.item], (err) => {
                 if(err){
-                  return console.log(err.message);
+                  return console.error(err.message);
                 }
               });
             });
             db.run(`DELETE FROM todo_${curChanId} WHERE item = ?`, [arr[1]], (err) => {
               if(err){
-                return console.log(err.message);
+                return console.error(err.message);
               }
               msg.reactions.removeAll()
                 .then(() => msg.react("✅"));
@@ -572,7 +656,7 @@ client.on("message", (msg) => {
           let arr = msg.content.slice(deleteText.length + 2, -1).split(" — ")
           db.run(`DELETE FROM todo_${curChanId} WHERE item = ?`, [arr[1]], (err) => {
             if(err){
-              return console.log(err.message);
+              return console.error(err.message);
             }
             msg.reactions.removeAll()
               .then(() => msg.react("🗑️"));
@@ -597,7 +681,7 @@ client.on("message", (msg) => {
           let arr = msg.content.slice(peopleDeleteText.length + 2, -1).split(" — ")
           db.run(`DELETE FROM people_${curChanId} WHERE name = ?`, [arr[0]], (err) => {
             if(err){
-              return console.log(err.message);
+              return console.error(err.message);
             }
             msg.reactions.removeAll()
               .then(() => msg.react("🗑️"));
@@ -624,7 +708,7 @@ client.login(process.env.TOKEN);
 
 /////////////////////////////////////////
 
-function timeAgoString(t){      //convert t seconds into x days/hours/min/sec
+function timeAgoString(t){        //convert t seconds into x days/hours/min/sec
   let d = Math.floor(t / 86400);
   t -= d * 86400;
   let h = Math.floor(t / 3600);
@@ -660,5 +744,24 @@ function timeAgoString(t){      //convert t seconds into x days/hours/min/sec
   if(s != 1){
     ret += "s";
   }
+  return ret;
+}
+
+function timezoneString(h, m){    //UTC+HH:MM
+  let ret = "UTC";
+  if(h < 0){
+    ret += "-";
+  }
+  else{
+    ret += "+";
+  }
+  if(Math.abs(h)<10){
+    ret += "0";
+  }
+  ret += Math.abs(h) + ":";
+  if(Math.abs(m)<10){
+    ret += "0";
+  }
+  ret += Math.abs(m);
   return ret;
 }
