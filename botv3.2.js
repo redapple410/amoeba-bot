@@ -1,38 +1,45 @@
-//To-Do List Bot v3.1.1
-//all lists/times in UTC-4:00
+//To-Do List Bot v3.2
+//channel-specific people reminders
 
 require("dotenv").config();
-
-//const keepAlive = require('./server');
 
 const Discord = require("discord.js");
 const client = new Discord.Client({disableEveryone: false});
 
 const sqlite3 = require("sqlite3");
 var db;
-var curChanId = "_0";
+var curChanId = 0;
 
-const helpText = "`!todo add <due date> ; <task>` - Add a new task to the to-do list.\n" +
+const helpText = "❓  **AMOEBA BOT COMMANDS**  ❓\n" +
+                 "*All lists (to-do, archive, remindable people) are channel specific!*\n\n" +
+
+                 "`!todo add <due date> ; <task>` - Add a new task to the to-do list.\n" +
                  "`!todo list` - Display the current to-do list.\n" +
                  "`!todo done <task>` - Mark a task from the to-do list as done, and move it to the archive.\n" +
-                 "`!todo delete <task>`, `!todo remove <task>` - Delete a task from the to-do list without archiving it.\n" +
+                 "`!todo delete <task>`, `!todo remove <task>` - Delete a task from the to-do list without archiving it.\n\n" +
+
                  "`!todo archive` - Display the archive of tasks.\n" +
                  "`!todo archivechannel` - Find out the archive channel for the current channel's list.\n" +
-                 "`!todo setarchivechannel <#channel>` - Set a new archive channel for the current channel. (admin only)\n";
+                 "`!todo setarchivechannel <#channel>` - Set a new archive channel for the current channel. (admin only)\n\n" +
+
+                 "`!todo peopleadd <name> ; <@user>` - Add a person to the list of remindable people. (admin only)\n" +
+                 "`!todo peoplelist` - Display the list of people who can be reminded about tasks (remindable people).\n" +
+                 "`!todo peopledelete <name>`, `!todo peopleremove <name>` - Delete a person from the list of remindable people. (admin only)\n";
 const doneText = "Are you sure you want to mark this task as done and archive it?";
 const deleteText = "Are you sure you want to DELETE this task without archiving it?";
+const peopleDeleteText = "Are you sure you want to remove this person from the list of remindable people?"
+
+const todoCommands = ["add ", "list", "done ", "remove ", "rm ", "delete ", "archivechannel", "setarchiveChannel", "peopleadd ", "peoplelist", "peopleremove ", "peoplerm ", "peopledelete "];
 
 const remindTime = 60;
 const snoozeTime = 86400;
 const warningTime = 86400;
-var names = {};
 
 const filter = (react, user) => {
   return user.id != client.user.id && (react.emoji.name == "☑️" || react.emoji.name == "❌")
 }
 
 client.on("ready", () => {
-	//keepAlive();
   console.log(`Logged in as ${client.user.tag}!`);
   db = new sqlite3.Database("./todo.db", (err) => {
 		if(err){
@@ -46,7 +53,6 @@ client.on("ready", () => {
     });
 	});
   client.user.setActivity("!todo help");
-  iniNames();
   setInterval(() => {
     let curTime = Math.floor(new Date().getTime() / 1000);
     db.each(`SELECT todoChan FROM pairs`, [], (err, row) => {
@@ -59,22 +65,52 @@ client.on("ready", () => {
           if(err){
             return console.error(err.message);
           }
+          let it = row.item;
+          let str = "";
           if(row.snooze == 0 && curTime >= row.date - warningTime && curTime <= row.date){
-            let str = reminderPing(row.item);
-            chan.send(`🔔 Hi ${str}just a friendly reminder that \`${row.item}\` will be due in ${timeAgoString(row.date - curTime)}. If you have already completed the task, then don't forget to mark it as done!`);
-            db.run(`UPDATE todo_${chan.id} SET snooze = 1 WHERE item = ?`, [row.item], (err) => {
-              if(err){
-                return console.error(err.message);
-              }
+            db.serialize(() => {
+              db.each(`SELECT name, userid FROM people_${chan.id}`, [], (err, row) => {
+                if(err){
+                  return console.error(err.message);
+                }
+                if(it.toLowerCase().includes(row.name.toLowerCase())){
+                  str += "<@" + row.userid + ">, ";
+                }
+              });
+              db.run(``, [], () => {
+                if(str == ""){
+                  str = "@everyone, ";
+                }
+                chan.send(`🔔 Hi ${str}just a friendly reminder that \`${row.item}\` will be due in ${timeAgoString(row.date - curTime)}. If you have already completed the task, then don't forget to mark it as done!`);
+                db.run(`UPDATE todo_${chan.id} SET snooze = 1 WHERE item = ?`, [row.item], (err) => {
+                  if(err){
+                    return console.error(err.message);
+                  }
+                });
+              });
             });
           }
           else if(curTime >= row.date + row.snooze){
-            let str = reminderPing(row.item);
-            chan.send(`📢 Hi ${str}just a friendly reminder that \`${row.item}\` was due ${timeAgoString(curTime - row.date)} ago. If you have already completed the task, then don't forget to mark it as done!`);
-            db.run(`UPDATE todo_${chan.id} SET snooze = ${curTime} + ${snoozeTime} - ${row.date} WHERE item = ?`, [row.item], (err) => {
-              if(err){
-                return console.error(err.message);
-              }
+            db.serialize(() => {
+              db.each(`SELECT name, userid FROM people_${chan.id}`, [], (err, row) => {
+                if(err){
+                  return console.error(err.message);
+                }
+                if(it.toLowerCase().includes(row.name.toLowerCase())){
+                  str += "<@" + row.userid + ">, ";
+                }
+              });
+              db.run(``, [], () => {
+                if(str == ""){
+                  str = "@everyone, ";
+                }
+                chan.send(`📢 Hi ${str}just a friendly reminder that \`${row.item}\` was due ${timeAgoString(curTime - row.date)} ago. If you have already completed the task, then don't forget to mark it as done!`);
+                db.run(`UPDATE todo_${chan.id} SET snooze = ${curTime} + ${snoozeTime} - ${row.date} WHERE item = ?`, [row.item], (err) => {
+                  if(err){
+                    return console.error(err.message);
+                  }
+                });
+              });
             });
           }
         });
@@ -89,6 +125,11 @@ client.on("message", (msg) => {
     let command = msg.content.slice(6);
     db.serialize(() => {
       db.run(`CREATE TABLE IF NOT EXISTS todo_${curChanId} (date INTEGER NOT NULL, item TEXT UNIQUE NOT NULL, snooze INTEGER DEFAULT 0)`, [], (err) => {
+        if(err){
+          return console.error(err.message);
+        }
+      });
+      db.run(`CREATE TABLE IF NOT EXISTS people_${curChanId} (name TEXT UNIQUE NOT NULL, userid TEXT UNIQUE NOT NULL)`, [], (err) => {
         if(err){
           return console.error(err.message);
         }
@@ -143,16 +184,18 @@ client.on("message", (msg) => {
             });
           }
 
-          else if(command.startsWith("add ") || command.startsWith("list") || command.startsWith("done ") || command.startsWith("remove ") || command.startsWith("rm ") || command.startsWith("delete ") || command.startsWith("archivechannel") || command.startsWith("setarchivechannel ")){
-            db.get(`SELECT todoChan FROM pairs WHERE archiveChan = ?`, [curChanId], (err, row) => {
-              if(err){
-                return console.error(err.message);
-              }
-              msg.channel.send(`Sorry, please go to another channel like <#${row.todoChan}> to use these commands!`);
-            });
-          }
-
           else{
+            for(let i = 0; i < todoCommands.length; i++){
+              if(command.startsWith(todoCommands[i])){
+                db.get(`SELECT todoChan FROM pairs WHERE archiveChan = ?`, [curChanId], (err, row) => {
+                  if(err){
+                    return console.error(err.message);
+                  }
+                  msg.channel.send(`Sorry, please go to another channel like <#${row.todoChan}> to use these commands!`);
+                });
+                return;
+              }
+            }
             msg.react("❓");
           }
         }
@@ -169,35 +212,33 @@ client.on("message", (msg) => {
             }
             let arr = command.slice(4).split(";", 2);
             let d = Date.parse(arr[0] + " UTC-4");
+            let it = arr[1].trim();
             if(isNaN(d)){
               msg.channel.send("Sorry, I don't understand your date format! Please try again.");
             }
+            else if(it == ""){
+              msg.react("😑");
+            }
+            else if(it.includes("@")){
+              msg.channel.send("Sorry, but the task cannot include the @ symbol. Please try again using a different wording.");
+            }
             else{
-              let it = arr[1].trim();
-              if(it == ""){
-                msg.react("😑");
-              }
-              else if(it.includes("@")){
-                msg.channel.send("Sorry, but the task cannot include the @ symbol. Please try again using a different wording.");
-              }
-              else{
-                db.get(`SELECT item FROM todo_${curChanId} WHERE item LIKE ? ORDER BY date`, [it], (err, row) => {
-                  if(err){
-                    return console.error(err.message);
-                  }
-                  if(row){
-                    msg.react("⛔");
-                  }
-                  else{
-                    db.run(`INSERT INTO todo_${curChanId} (date, item) VALUES (?, ?)`, [d/1000, it], (err) => {
-                      if(err){
-                        return console.log(err.message);
-                      }
-                      msg.react("🆗");
-                    });
-                  }
-                });
-              }
+              db.get(`SELECT item FROM todo_${curChanId} WHERE item LIKE ? ORDER BY date`, [it], (err, row) => {
+                if(err){
+                  return console.error(err.message);
+                }
+                if(row){
+                  msg.react("⛔");
+                }
+                else{
+                  db.run(`INSERT INTO todo_${curChanId} (date, item) VALUES (?, ?)`, [d/1000, it], (err) => {
+                    if(err){
+                      return console.log(err.message);
+                    }
+                    msg.react("🆗");
+                  });
+                }
+              });
             }
           }
 
@@ -307,63 +348,168 @@ client.on("message", (msg) => {
           }
 
           else if(command.startsWith("setarchivechannel ")){
-            if(msg.member.hasPermission("ADMINISTRATOR")){
-              let archiveChanId = command.slice(20, -1);
-              if(!msg.guild.channels.cache.find(chan => chan.id == archiveChanId)){
-                msg.react("⛔");
+            if(!msg.member.hasPermission("ADMINISTRATOR")){
+              msg.react("⛔");
+              return;
+            }
+            let archiveChanId = command.slice(20, -1);
+            if(!msg.guild.channels.cache.find(chan => chan.id == archiveChanId)){
+              msg.react("⛔");
+              return;
+            }
+            db.get(`SELECT archiveChan FROM pairs WHERE todoChan = ?`, [curChanId], (err, row) => {
+              if(err){
+                return console.error(err.message);
+              }
+              if(row && row.archiveChan == archiveChanId){
+                msg.react("🤔");
               }
               else{
-                db.get(`SELECT archiveChan FROM pairs WHERE todoChan = ?`, [curChanId], (err, row) => {
+                db.get(`SELECT todoChan FROM pairs WHERE todoChan = ?`, [archiveChanId], (err, row) => {
                   if(err){
                     return console.error(err.message);
                   }
-                  if(row && row.archiveChan == archiveChanId){
-                    msg.react("🤔");
+                  if(row){
+                    if(row.todoChan == curChanId){
+                      db.run(`UPDATE pairs SET archiveChan = ? WHERE todoChan = ?`, [archiveChanId, curChanId], (err) => {
+                        if(err){
+                          return console.error(err.message);
+                        }
+                        msg.react("🆗");
+                      });
+                    }
+                    else{
+                      msg.react("⛔");
+                    }
                   }
                   else{
-                    db.get(`SELECT todoChan FROM pairs WHERE todoChan = ?`, [archiveChanId], (err, row) => {
+                    db.get(`SELECT archiveChan FROM pairs WHERE archiveChan = ?`, [archiveChanId], (err, row) => {
                       if(err){
                         return console.error(err.message);
                       }
                       if(row){
-                        if(row.todoChan == curChanId){
-                          db.run(`UPDATE pairs SET archiveChan = ? WHERE todoChan = ?`, [archiveChanId, curChanId], (err) => {
-                            if(err){
-                              return console.error(err.message);
-                            }
-                            msg.react("🆗");
-                          });
-                        }
-                        else{
-                          msg.react("⛔");
-                        }
+                        msg.react("⛔");
                       }
                       else{
-                        db.get(`SELECT archiveChan FROM pairs WHERE archiveChan = ?`, [archiveChanId], (err, row) => {
+                        db.run(`UPDATE pairs SET archiveChan = ? WHERE todoChan = ?`, [archiveChanId, curChanId], (err) => {
                           if(err){
                             return console.error(err.message);
                           }
-                          if(row){
-                            msg.react("⛔");
-                          }
-                          else{
-                            db.run(`UPDATE pairs SET archiveChan = ? WHERE todoChan = ?`, [archiveChanId, curChanId], (err) => {
-                              if(err){
-                                return console.error(err.message);
-                              }
-                              msg.react("🆗");
-                            });
-                          }
+                          msg.react("🆗");
                         });
                       }
                     });
                   }
                 });
               }
+            });
+          }
+
+          else if(command.startsWith("peopleadd ")){
+            if(!msg.member.hasPermission("ADMINISTRATOR")){
+              msg.react("⛔");
+              return;
             }
-            else{
+            if(!command.slice(10).includes(";")){
+              msg.channel.send("Sorry, please check the format of your command and try again.");
+              return;
+            }
+            let arr = command.slice(10).split(";", 2);
+            let p = arr[0].trim();
+            let id = arr[1].trim();
+            if(!id.startsWith("<@!") || !id.endsWith(">")){
               msg.react("⛔");
             }
+            else if(id == "<@!717577524762116109>"){
+              msg.react("😳");
+            }
+            else if(p == "" || id == ""){
+              msg.react("😑");
+            }
+            else if(p.includes("@")){
+              msg.channel.send("Sorry, but the name cannot include the @ symbol. Please try again using a different name.");
+            }
+            else{
+              id = id.slice(3, -1);
+              if(!msg.guild.members.cache.find(memb => memb.id == id)){
+                msg.react("⛔");
+              }
+              else{
+                db.get(`SELECT name FROM people_${curChanId} WHERE name LIKE ? OR userid = ?`, [p, id], (err, row) => {
+                  if(err){
+                    return console.error(err.message);
+                  }
+                  if(row){
+                    msg.react("⛔");
+                  }
+                  else{
+                    db.run(`INSERT INTO people_${curChanId} (name, userid) VALUES (?, ?)`, [p, id], (err) => {
+                      if(err){
+                        return console.log(err.message);
+                      }
+                      msg.react("🆗");
+                    });
+                  }
+                });
+              }
+            }
+          }
+
+          else if(command.startsWith("peoplelist")){
+            let str = "";
+            db.serialize(() => {
+              db.each(`SELECT name, userid FROM people_${curChanId} ORDER BY name`, [], (err, row) => {
+                if(err){
+                  return console.error(err.message);
+                }
+                let tag = "?";
+                msg.guild.members.cache.find((memb) => {
+                  if(memb.id == row.userid){
+                    tag = memb.user.tag;
+                  }
+                });
+                str += row.name + " — " + tag + "\n";
+              });
+              db.run("", [], () => {
+                if(str == ""){
+                  msg.channel.send("It looks like this list of people is empty!");
+                }
+                else{
+                  msg.channel.send(`👥  **REMINDABLE PEOPLE**  👥\n${str}`);
+                }
+              });
+            });
+          }
+
+          else if(command.startsWith("peopleremove ") || command.startsWith("peoplerm ") || command.startsWith("peopledelete ")){
+            if(!msg.member.hasPermission("ADMINISTRATOR")){
+              msg.react("⛔");
+              return;
+            }
+            let p = "";
+            if(command.startsWith("peopleremove ") || command.startsWith("peopledelete ")){
+              p = "%" + command.slice(13) + "%";
+            }
+            else if(command.startsWith("peoplerm ")){
+              p = "%" + command.slice(9) + "%";
+            }
+            db.get(`SELECT name, userid FROM people_${curChanId} WHERE name LIKE ? ORDER BY name`, [p], (err, row) => {
+              if(err){
+                return console.error(err.message);
+              }
+              if(row){
+                let tag = "?";
+                msg.guild.members.cache.find((memb) => {
+                  if(memb.id == row.userid){
+                    tag = memb.user.tag;
+                  }
+                });
+                msg.channel.send(peopleDeleteText + "\n`" + row.name + " — " + tag + "`");
+              }
+              else{
+                msg.react("🚫");
+              }
+            });
           }
 
           else{
@@ -436,6 +582,31 @@ client.on("message", (msg) => {
     ));
   }
 
+  else if(msg.author.id === client.user.id && msg.content.startsWith(peopleDeleteText)){
+    curChanId = msg.channel.id;
+    msg.react("☑️")
+      .then(() => msg.react("❌")
+      .then(() => msg.awaitReactions(filter, {max: 1, time: 15000})
+      .then((collected) => {
+        let react = collected.first();
+        if(collected.size == 0 || react.emoji.name === "❌"){
+          msg.reactions.removeAll()
+            .then(() => msg.react("🚫"));
+        }
+        else if(react.emoji.name === "☑️"){
+          let arr = msg.content.slice(peopleDeleteText.length + 2, -1).split(" — ")
+          db.run(`DELETE FROM people_${curChanId} WHERE name = ?`, [arr[0]], (err) => {
+            if(err){
+              return console.log(err.message);
+            }
+            msg.reactions.removeAll()
+              .then(() => msg.react("🗑️"));
+          });
+        }
+      })
+    ));
+  }
+
 });
 
 /////////////////////////////////////////
@@ -452,31 +623,6 @@ client.on("disconnect", () => {
 client.login(process.env.TOKEN);
 
 /////////////////////////////////////////
-
-function iniNames(){
-  names["amy"] = process.env.AMYID;
-  names["albert"] = process.env.ALBERTID;
-  names["eddie"] = process.env.EDDIEID;
-  names["ethan"] = process.env.ETHANID;
-  names["jake"] = process.env.JAKEID;
-  names["jerry"] = process.env.JERRYID;
-  names["lucy"] = process.env.LUCYID;
-  names["matthew"] = process.env.MATTHEWID;
-  names["ryan"] = process.env.RYANID;
-}
-
-function reminderPing(str){
-  let ret = "";
-  for(let i in names){
-    if(str.toLowerCase().includes(i)){
-      ret += `<@${names[i]}>, `;
-    }
-  }
-  if(ret == ""){
-    return "@everyone, "
-  }
-  return ret;
-}
 
 function timeAgoString(t){      //convert t seconds into x days/hours/min/sec
   let d = Math.floor(t / 86400);
