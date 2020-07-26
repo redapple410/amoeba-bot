@@ -12,7 +12,7 @@ var curChanId = 0;
 
 const helpText = "❓  **AMOEBA BOT COMMANDS**  ❓\n" +
                  "All lists (to-do, archive, remindable people) are channel specific!\n" +
-                 "*Admin only commands are denoted by  ⛔.*\n\n" +
+                 "*Admin-only commands are denoted by  ⛔.*\n\n" +
 
                  "`!todo add <due date> ; <task>` - Add a new task to the to-do list.\n" +
                  "`!todo list` - Display the current to-do list.\n" +
